@@ -1,0 +1,273 @@
+---
+title: "Individualized Student Instruction Principal Component and Regression Analyses"
+author: "Alexis Swanz"
+date: '2023-05-01'
+output:  
+  prettydoc::html_pretty:
+    theme: cayman
+    highlight: github
+---
+
+## Principal Component Analysis 
+```{r}
+library(tidyverse) #call in packages
+library(psych)
+library(dplyr)
+library(relaimpo)
+library(caret)
+```
+
+## Data Wrangling
+The Project KIDS dataset (available on LDbase) is a comprehensive set of data from 9 RCTs. Thus, I will start by calling in the dataset and filtering out the unwanted data, only keeping data from project 1 (Al Otaibia et al., 2011). Next, I will select variables of interest, remove NAs, and rename variables for clarity.
+```{r}
+PK_full <- read_csv("PK_FullData.csv") #importing the CSV file of complete Project KIDS data
+```
+
+```{r}
+PK_project1 <- PK_full %>% #calling the dataframe
+  filter(project == "1") #filtering to only keep data from project one
+
+```
+
+### cleaning
+```{r}
+PKp1_WJ_scores <- PK_project1 %>% #calling the dataframe
+  filter(!is.na(PK_ID),!is.na(sID),!is.na(Race), !is.na(Gender), !is.na(FARL), !is.na(LEP), !is.na(Ethnicity), !is.na(treatment), !is.na(PS_5), !is.na(PS_9), !is.na(CTOPP_Blend_Total_w1), !is.na(CTOPP_EL_Total_w1), !is.na(WJ_AKA_Total_w1), !is.na(WJ_LW_Total_w1), !is.na(WJ_PV_Total_w1), !is.na(WJ_PC_Total_w1), !is.na(WJ_WA_Total_w1), !is.na(KBIT_Total_Matrices), !is.na(KBIT_Total_Riddles), !is.na(KBIT_Total_Verbal)) %>% #filtering out NAs from all variables
+  dplyr::select(PK_ID, sID, Race, Ethnicity, Gender, FARL, LEP, treatment, WJ_AKA_Total_w1, PS_5, PS_9, CTOPP_Blend_Total_w1, CTOPP_EL_Total_w1,  WJ_LW_Total_w1, WJ_PV_Total_w1, WJ_PC_Total_w1, WJ_WA_Total_w1,KBIT_Total_Matrices, KBIT_Total_Riddles,KBIT_Total_Verbal) #selecting variables I want
+
+PKp1_WJ_scores #print
+```
+
+### renaming and recoding
+```{r}
+PKp1_labeled <- PKp1_WJ_scores %>% #call df
+  dplyr::rename(parent_time_read = PS_5, parent_edu = PS_9, letter_ID = WJ_LW_Total_w1, passage_comp = WJ_PC_Total_w1, picture_vocab = WJ_PV_Total_w1, word_attack = WJ_WA_Total_w1, KBIT_matrices = KBIT_Total_Matrices, KBIT_riddles = KBIT_Total_Riddles, KBIT_verbal = KBIT_Total_Verbal, limited_english_proficiency = LEP, free_reduced_lunch = FARL, CTOPP_Blend = CTOPP_Blend_Total_w1 , CTOPP_EL = CTOPP_EL_Total_w1, academic_knowledge = WJ_AKA_Total_w1) %>%   #renaming for clarity
+  mutate(Gender = recode(Gender, "0" = "female", "1" = "male"), Ethnicity = recode(Ethnicity, "0" = "Not hispanic", "1" = "Hispanic"), Race = recode(Race, "1" = "American Indian/Alaskan Native", "2" = "Asian", "3" = "AA/Black", "4" = "Hawaiian/Pacific Islander", "5" = "Caucasian/White", "6" = "Multiracial", "7" = "Other"), free_reduced_lunch = recode(free_reduced_lunch, "0" = "Not FARL", "1" = "FARL"), limited_english_proficiency = recode(limited_english_proficiency, "0" = "Not LEP", "1" = "LEP"),  treatment = recode(treatment, "0" = "control", "1" = "treatment"))
+
+PKp1_labeled #print
+
+```
+
+### Demographic Information
+```{r}
+table(PKp1_labeled$Gender) #creating table of count for Gender
+```
+
+```{r}
+table(PKp1_labeled$Race) #creating table of count for Race
+```
+
+```{r}
+table(PKp1_labeled$treatment) #creating table of count for treatment
+```
+
+```{r}
+table(PKp1_labeled$free_reduced_lunch) #creating table of count for FARL
+```
+
+```{r}
+table(PKp1_labeled$limited_english_proficiency) #creating table of count for LEP
+```
+
+## PCA
+
+### STEP 1: Correlations for Strong Multicollinearity
+First, I need to run a correlation matrix to check for multicollinearity. If there are instances of multicollinearity I will remove those variables one by one starting with the variable possessing the highest correlation coefficient. 
+```{r}
+str(PKp1_labeled) #check structure
+
+PKp1_corr <- PKp1_labeled[,10:20]#create dataframe for correlation
+
+corr_PKp1 <- cor(PKp1_corr) #run correlation
+
+corr_PKp1 #print results
+```
+There are no instances of multicollinearity among variables.
+
+### STEP 2: Scale all the variables
+Next, I will be scaling all of the variables included in the model. Variables with larger variances will consequently explain most of the variance. However, if variables in the data set are not on the same scale, variables with a larger scale will likely have the largest variance. Thus, it is crucial to scale the variables included in the model so the explained variance is not affected.  
+
+```{r}
+library(psych)
+
+str(PKp1_corr)#check structure
+
+scaled_PKp1 <- PKp1_corr %>% 
+  mutate_at(c(1:11), ~(scale(.) %>% as.vector)) #scale variables so differences in scales are not responsible for variance explained
+
+str(scaled_PKp1) #check structure
+psych::describe(scaled_PKp1) #get descriptives
+
+
+```
+
+#### STEP 3: Visualizing PCA
+Next, I will used the scaled data to run a PCA with a component for each variable and graph the result. This is not the final PCA, but graphing the variables will help me to understand my data and predict how many factors there will be/what loads onto the same factor. Positively correlated variables will be on the same side of the graph, whereas negatively correlated variables will be on the opposite side 
+
+```{r}
+
+library(factoextra) #extract and visualize the output of multivariate data analyses, including 'PCA'
+
+viz_pca <- prcomp(scaled_PKp1, center = TRUE,scale. = TRUE) #run PCA with a component for each variable.
+
+#Graph variables
+fviz_pca_var(viz_pca,
+             col.var = "contrib", # Color by contributions to the PC
+             gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"), #choose gradient colors
+             repel = TRUE #Avoid overlapping text 
+             )
+
+```
+
+According to the Graph there appears to be at least two components, maybe three. One component seems to represent relational knowledge (KBIT, picture vocab), another looks reading related (CTOPP and WJ scores), and there may be a third component representing parent involvement (parent time read, parent education).
+
+### STEP 4: Bartlett's test
+Next, I will run Bartletts test of sphericity to asses whether the r-matrix is an identity matrix. If the p value is above .05 (not significant), variables are not related to one another and a PCA should not be run. If the p value is below .05, I can proceed and conduct a PCA.
+```{r}
+cortest.bartlett(scaled_PKp1, 458) #run Bartletts test of sphericity. 458 equals sample size
+#p value below .05, so it is not an identity matrix
+```
+
+### STEP 5: KMO
+For step 5, I need to assess sampling adequacy for each variable in the model using the Kaiser-Meyer-Olkin (KMO) index. The KMO measures the proportion of variance among variables that might be common variance. MSA values .7 or higher indicate data suitable for use in a factor analysis.
+
+```{r}
+
+KMO(scaled_PKp1) #run KMO, looking for good values between above .7
+
+```
+
+The KMO resulted in MSA values above .8 for all variables in the model. The overall MSA is .89, indicating a high proportion of variance among variables that may be common variance 
+
+### STEP 6: Baseline PCA
+For step 6, I will select the number of components in my analysis and run a baseline PCA. After assessing the ss loadings and cumulative variance I will use the eigenvalue to create a scree plot to look for a point of inflection.
+```{r}
+pca_base <- principal(scaled_PKp1, nfactors = 11, rotate = "none") #run pca with 12 factors for 12 variables
+
+pca_base #results
+
+plot(pca_base$values, type = "b") #scree plot using eigen values, plots the eigenvalues (y) against the factor number (x)
+
+#indicates 3 variables 
+
+```
+The first three principal components (PC1-PC3) have SS loadings above 1 and a cumulative variance of .65, indicating those 3 components explain a large amount of variance (65%). These results suggest I should include 3 components in my final analysis. This decision is further solidified by the scree plot, as the curve starts to flatten at 3 components. 
+
+### STEP 7: Check that residuals are normally distributed
+For step 7 I will run a PCA with 3 factors, make a correlation matrix, and use the matrix and pca loadings to get the factor residuals. Then, I will make a histogram to check if those residuals are normally distributed. 
+```{r}
+pca_resid <- principal(scaled_PKp1, nfactors = 3, rotate = "none") #run pca with 3 factors
+pca_resid 
+
+corMatrix<-cor(scaled_PKp1) #correlation matrix for final data
+
+residuals<-factor.residuals(corMatrix, pca_resid$loadings) #create object from the correlation matrix and the pca loading containing the factor residuals
+
+hist(residuals) #checking if residuals are normally distributed
+```
+Residuals appear to be normally distributed. 
+
+### STEP 8: Informed PCA with specific number of components
+For step 8 I will run an informed PCA with 3 components based off of the results of my baseline pca. I will also rotate the data using a promax rotation because factors are correlated to each other. Rotating the data will rotate the factor axes resulting in variables loading mostly on one factor. Results of this analysis will be discussed after collecting factor scores.
+```{r}
+pca_final <- principal(scaled_PKp1, nfactors = 3, rotate = "promax") #promax rotation
+pca_final #results
+
+print.psych(pca_final, cut = 0.3, sort = TRUE) #including loadings over .3
+```
+
+```{r}
+plot(pca_final) #plot final PCA results
+#The far right on each box shows where the component's observations cluster compared to each other cluster
+#component 1 is black
+#component 2 is blue
+#component 3 is red
+
+fa.diagram(pca_final) #diagram components
+
+```
+
+### STEP 9: Collect factor scores
+For step 9 I will collect factor scores for each observation, rename columns according to the variables that loaded onto those components, and combine the dataframe with the final PCA scores and the dataframe with the renamed components. 
+```{r}
+pca_final_scores <- as.data.frame(pca_final$scores) #factor scores for each observation 
+
+pca_final_scores <- pca_final_scores %>% 
+  rename(Relational_Reasoning = RC1, Reading_Comprehension = RC2, Parent_Involvement = RC3) #rename columns
+
+str(PKp1_labeled) #checking structure 
+
+final_data <- cbind(PKp1_labeled, pca_final_scores)#combining dataframes
+str(final_data)
+
+```
+
+## PCA discussion
+Results of the PCA indicate there are 2 to 3 components. The first two are strong components, and the third weaker component.
+
+1. Relational Reasoning
+The first component, relational reasoning, explains 42% of the variance. Relational reading includes 4 variables: KBIT riddles, KBIT matrices, KBIT verbal, and WJ Picture vocabulary. I chose the name relational reasoning because the variables in this component all measure verbal and nonverbal intellectual abilities (e.g., problem solving, socioemotional skills, vocabulary). The strongest variables in this component are KBIT verbal (.92) and KBIT riddles (.88).
+
+* KBIT verbal: measures verbal intellectual abilities. One type measures receptive vocabulary, in which the examiner says a word and the individual points to the picture that best illustrates the word. The other type measures general information about the world (nature, geography, the arts, science, etc.). 
+* KBIT riddles: Measures comprehension reasoning, and vocabulary knowledge. No reading involved. 
+* KBIT matrices: This subset measures the participant’s nonverbal intelligenc like problem solving, relationship perception, and complete visual analogies. No testing vocabulary or language skills. 
+* Picture vocabulary: Measures student word knowledge
+
+2. Reading Comprehension
+The second component, reading comprehension, explains 43% of the variance. Reading comprehension is comprised of four variables: WJ word attack, WJ letter ID, WJ passage comprehension, CTOPP blend, and  CTOPP EL. I chose the name reading comprehension because all variables included in the component measures some skills that collectively lend to reading comprehension (e.g., decoding, phonetic coding, print comprehension, sound synthesizing). The strongest variables in this component are WJ word attack (.91), WJ letter ID (.87), and WJ passage comprehension (.87).
+
+* WJ word attack: measures decoding and phonetic coding
+* WJ letter ID: measures decoding
+* WJ passage comprehension: measures print comprehension
+* CTOPP blend: measures the ability to synthesize sounds to form words
+* COPP EL: measures the ability to remove phonological segments from spoken words to form other words
+
+3. Parent involvement 
+The third component, parent involvement, explains 15% of the variance. Parent involvement is made up of two variables: parent time read, and parent education. I chose the name parent involvement because both variables in the component measures characteristics of parents who are involved in their child's academic success. The strongest variable in the component is parent time read per week (.90).
+
+* Parent time read: measures time read to students per week
+* Parent education level: measure highest level of education (e.g., high school, some college, etc). 
+
+## Model Data using Component Score
+Finally, I will run a regression analysis to model the data using the component score rather than the variable score. First, I will create a smaller data frame composed of my PCA components and outcome variable. Next, I will compute a 10-fold cross validation. Computing a 10 fold cross validation allows me to estimate the skill of my ML model and increase its predictive accuracy. 
+```{r}
+final_data_2 <- final_data %>% 
+  dplyr::select(academic_knowledge, Relational_Reasoning, Reading_Comprehension, Parent_Involvement) #creating a df for the regression with just the components and outcome variable
+```
+
+### 10 fold cross-validation 
+```{r}
+library(relaimpo)
+
+set.seed(123)#set seed for replication of cross-validation 
+
+train.control <- trainControl(method = "cv", number = 10) #method = cross validation, number = ten times (10 fold cross-validation)
+
+#run regression 
+lm_10 <- train(academic_knowledge ~ Relational_Reasoning + Reading_Comprehension + Parent_Involvement, data = final_data_2,
+                           method = "lm", 
+                           trControl = train.control)
+
+summary(lm_10) #results of regression
+```
+
+### Variable Importance
+```{r}
+varImp(lm_10)$importance #assess variable importance
+```
+### Scatterplot
+```{r}
+ggplot(final_data_2, aes(y = academic_knowledge, x = Relational_Reasoning, color = Parent_Involvement)) +
+  geom_point() +
+  stat_smooth(method="lm",se=FALSE) +
+  xlab("Relational Reasoning") +
+  ylab("Academic Knowledge") +
+  ggtitle("Scatterplot of Regression Predicting Academic Knowledge") +
+  geom_abline(intercept = 1,
+              slope = 1,
+              color = "red",
+              size = 2)
+  
+```
+
+
